@@ -322,8 +322,8 @@ if __name__ == "__main__":
     tx_rx_ground_range = 1234e3     # random number chosen; this needs to determined
 
     # t = 2R/c
-    T_rmax = 2 * np.sqrt(tx_rx_ground_range**2 + rmax**2) / c     # pythagoras
-    T_rmin = 2 * np.sqrt(tx_rx_ground_range**2 + rmin**2) / c     # pythagoras
+    T_rmax = 2 * np.sqrt((tx_rx_ground_range/2)**2 + rmax**2) / c     # pythagoras
+    T_rmin = 2 * np.sqrt((tx_rx_ground_range/2)**2 + rmin**2) / c     # pythagoras
     
     print ("Max range delay %f, min %f" % (T_rmax, T_rmin))
     dT_r = T_rmax - T_rmin
@@ -331,11 +331,12 @@ if __name__ == "__main__":
     # FIXME TEMP
     #dT_r = 0
 
-    # Set the duration of the mixing required
-    T_h = dT_r + T_t
-    print("Required minimum heterodyne/mixing duration: %f" % T_h)
+    # Exaggerates the time delay of echoes, since in this sim, we are sampling much slower
+    exaggerate_time_delay = 1000
 
-    T_h += 5       # increase the heterodyne artificially, so it overlaps all receive waveforms
+    # Set the duration of the mixing required
+    T_h = (dT_r * exaggerate_time_delay) + T_t
+    print("Required minimum heterodyne/mixing duration: %f" % T_h)
 
     # Note: the above will need to be determined experimentally, by changing T_m to match
     #   the transmit time (T_r) of a JORN sounder.
@@ -355,11 +356,11 @@ if __name__ == "__main__":
     # In reality, the timing fineness is 1/fs samples worth, approx 1/63e6 sec.
     # In simulation, we remove the x10e6 (all MHz become Hz, all MSa/s become Sa/S)
 
-    OSF =  2    # oversampling factor; basically increases fs
+    OSF =  10    # oversampling factor; basically increases fs
 
     waveform = make_linear(f0, f1, tsw, t_frac, fs, tstart, OSF, returnWaveform=True) #, 'chirp_linear.png')
 
-    transmit_chirp = waveform                           #decimate(waveform, 10)
+    transmit_chirp = waveform                           
 
     # Apply a test modulation:
     # NOT USED
@@ -391,28 +392,31 @@ if __name__ == "__main__":
 
     dT = (T_h - T_t) / 2     # additional time for heterodyne
     
-    T_m = T_r                  # T_m is to be set according to note 2.
+    T_h += 2                 # increase the heterodyne artificially 
+                             # - not essential, but allows noise either side of the received waveform to be viewed
+
+    T_m = T_r                   # T_m is to be set according to note 2.
                                 # This cannot exceed the absolute value of difference between  
                                 # (T_h - T_t) / 2, i.e. dT
                                 #
                                 
 
     # Define details of the echoes to be received
-    numEchoes = 5
+    numEchoes = 10
 
-    timerange = abs((T_h - T_t) / 2) * 1
+    timerange = abs((T_h - T_t) / 2)  
     timerange = dT/2
-    #timerange = dT_r    
+
+    print(timerange)
 
     # Create an array of random receive times for each echo
-    T_rs = [T_r + random.uniform(-timerange, timerange) for i in range(numEchoes)]
+    T_rs = [T_r + random.uniform(-timerange, timerange) for i in range(numEchoes+1)]
 
     Tafter = dT - (T_r-T_m)     # see the figures in the stretch pdf for logic    
     Tbefore = dT + (T_r-T_m)
 
     # Time before and after each echo, relative to the mixer time
 
-    #Tafter_s = not required
     # Calculate an array of durations
     Tbefore_s = [x - T_m + dT for x in T_rs]
 
@@ -430,9 +434,9 @@ if __name__ == "__main__":
     f_m1 = fc + f_m_sw/2     # stop freq for mixer
 
     # These compress the pulse
-    #mixer_waveform = make_linear(-f_m1, -f_m0, T_h, t_frac, fs, 0, OSF, 
+    # mixer_waveform = make_linear(-f_m1, -f_m0, T_h, t_frac, fs, 0, OSF, 
     #                             returnWaveform=True, makeComplex=True, negateFrequency=False)
-    #mixer_waveform = make_linear(-f_m1, -f_m0, T_h, t_frac, fs, 0, OSF, 
+    # #mixer_waveform = make_linear(-f_m1, -f_m0, T_h, t_frac, fs, 0, OSF, 
     #                             returnWaveform=True, makeComplex=True, negateFrequency=True)
     
     # This allows follow on stretch processing
@@ -493,7 +497,7 @@ if __name__ == "__main__":
     # Calculated the stretched processing
     dechirp = receive_waveform * mixer_waveform
 
-    # DEBUG CODE - PLOT FFT (needs fixing)
+    # DEBUG CODE - PLOT FFT (FIXME needs fixing)
     # --------------------------------------------------------
     # y = fft(dechirp)
     # N = len(mixer_waveform)
@@ -524,14 +528,18 @@ if __name__ == "__main__":
     # TODO
 
     # Apply FIR filters (to correct CIC droop)
+    # == Compensation FIR Filter
+    #
     # Note: if CIC filters are applied, the required FIR design is changed
     # TODO: after applying CIC filters; this FIR is the CFIR / PFIR filter
-    #   This is used temporarily, only to Low pass filter the demodulated waveform
+
+    #  The following is used temporarily, only to Low pass filter the demodulated waveform
 
 
+    # TODO - FIR filter to suit CIC filter above.
     numtaps = 2002
-    bw = 0.01             
-    f = bw * OSF
+    bw = 0.001             
+    f = bw / OSF
 
     n = numtaps
     b = signal.firwin(n, cutoff = f, window = "hamming")
@@ -567,15 +575,17 @@ if __name__ == "__main__":
 
     # ==================================================
     # Window the time domain data
-    M = int(len(complex2) * f/fs * 2) 
-    M = 1
+    M = int(len(complex2) * f/fs * 1000 / OSF)  # attempt to calculate desired decimation
+
+    M = 1000   # set fixed decimation
+    
+    print ("Decimation %d" % M)
     decimate = complex2[1000::M]           #TODO-remove samples in transient, here starting 1000 samples in
 
-    print ("Decimation %d" % M)
     w = np.blackman(len(decimate))
 
-    y = fft(decimate)
-    ywf = fft(decimate*w)
+    y = np.fft.fftshift(fft(decimate))
+    ywf = np.fft.fftshift(fft(decimate*w))
 
     N = len(y)
 
@@ -583,12 +593,18 @@ if __name__ == "__main__":
     T = 1/(fs) * M
 
     x = np.linspace(0.0, N*T, N)
-    xf = np.linspace(0.0, 1.0/(2.0*T), N//2)
+
+    #xf = np.linspace(0.0, 1.0/(2.0*T), N//2)
+    xf = np.linspace(0.0, 1.0/(T), N)
     
     fig, ax1 = plt.subplots()
-    plt.semilogy(xf, 2.0/N * np.abs(y[0:N//2]))
+    
     #plt.semilogy(xf, 2.0/N * np.abs(y[0:N//2]))
-    plt.semilogy(xf[0:N//2], 2.0/N * np.abs(ywf[0:N//2]), '-r')
+    plt.semilogy(xf, 2.0/N * np.abs(y[0:N]))
+
+    #plt.semilogy(xf, 2.0/N * np.abs(y[0:N//2]))
+    plt.semilogy(xf[0:N], 2.0/N * np.abs(ywf[0:N]), '-r')
+
     plt.grid()
     plt.show()
 
@@ -601,20 +617,25 @@ if __name__ == "__main__":
     ax0.set_xlabel("time in seconds")
     ax0.legend()
 
-    ax1 = fig.add_subplot(312)
-    ax1.plot(t_all, np.abs(mixer_waveform), label='heterodyne')
+    ax1 = fig.add_subplot(313)
+    #ax1.plot(t_all, np.abs(mixer_waveform), label='heterodyne')
+    ax1.plot(x, np.abs(decimate), label='decimated')
     ax1.set_xlabel("time in seconds")
     ax1.legend()
 
-    ax2 = fig.add_subplot(313)
+    ax2 = fig.add_subplot(312)
     ax2.plot(t_all, np.abs(lpf_complex))
     ax2.plot(t_all, np.abs(complex2))           # this is the addition of I and Q, it is equivalent to lpf_complex
+
     ax2.set_xlabel("time in seconds")
     #ax1.set_ylim(0.0, a*duration + f0 + 1)  # +1 only to show the sweep
     ax2.legend()
     
 
     plt.show()
+
+    # Spectrogram processing
+    # TODO
 
     exit()
 
